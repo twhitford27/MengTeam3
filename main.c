@@ -1,8 +1,8 @@
-/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
   * @brief          : Main program body
+  * @author			: Nicholas Fernandes @ MEng Team 3
   ******************************************************************************
   * @attention
   *
@@ -14,193 +14,191 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
-  */
-/* USER CODE END Header */
+**/
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-#include <string.h>
-#include <stdio.h>
-#include <math.h>
-/* USER CODE END Includes */
-
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
-
-/* USER CODE END PTD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
+#include "CO_app_STM32.h"						//Required for CANopen
+#include "CANopen.h"							//Required for CANopen
+#include "../CANopenNode/301/CO_SDOclient.h"	//Required for CANopen
 
 /* Private variables ---------------------------------------------------------*/
-TIM_HandleTypeDef htim3;
-TIM_HandleTypeDef htim4;
-TIM_HandleTypeDef htim10;
+CAN_HandleTypeDef hcan1;			//Generated from MX
+TIM_HandleTypeDef htim14;			//Generated from MX
+UART_HandleTypeDef huart2;			//Generated from MX
 
-UART_HandleTypeDef huart2;
-
-/* USER CODE BEGIN PV */
-
-/* USER CODE END PV */
+uint32_t data_Rx = 0;				//Global variable for received variable
+uint32_t data_Tx = 0;				//Global variable for transmitted variable
 
 /* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_USART2_UART_Init(void);
-static void MX_TIM3_Init(void);
-static void MX_TIM4_Init(void);
-static void MX_TIM10_Init(void);
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
+void SystemClock_Config(void);				//Generated from MX
+static void MX_GPIO_Init(void);				//Generated from MX
+static void MX_USART2_UART_Init(void);		//Generated from MX
+static void MX_CAN1_Init(void);				//Generated from MX
+static void MX_TIM14_Init(void);			//Generated from MX
 
 /* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-#define Sys_Freq 84000000
-#define timer3Clock 1009000
-#define INPUT_BUFF_SIZE 512
-
-double freq_max = 60.0;
-double threshold_freq = 48.0;
-
-double freq_normal = 50.0;
-double freq_min = 45.0;
-double freq = 0.0;
-
-int startFlag = 0;
-double timValue1 = 0;
-double timValue2 = 0;
-double difference = 0;
-uint16_t falseerrors = 0;
-
-uint8_t buff_msg[] = "SUPPORT ACTIVE";
-uint8_t txbuf[64];
-
-double PWMRANGE = 100;
-double Tref = 100.0;
-
-void Tref_calc();
-
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim){
-	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1){
-
-		if (startFlag == 0){
-			//Sets the start flag to true and measures the inital value
-			startFlag = 1;
-			timValue1 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
-
-			//HAL_UART_Transmit(&huart2, buff_msg, sizeof(buff_msg), 100);
-
-		}
-		else {
-			//reads the second value
-			timValue2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
-
-			if (timValue2 > timValue1){
-				//checks the difference between these values
-				difference = timValue2 - timValue1;
-			}
-			else{
-				//overflow calculation
-				difference = (0xffffffff - timValue1) + timValue2;
-			}
-			//calculates the frequency
-			freq = timer3Clock / difference;
-			//if the frequency is below the threshold transmit the support active message
-			if (freq < threshold_freq){
-				HAL_UART_Transmit(&huart2, buff_msg, sizeof(buff_msg), 100);
-
-			}
-			//if frequency is within accepted range then calculate the frequency
-			if (freq <= freq_max){
-				startFlag = 0;
-				freq = freq;
-				//transmit data over COM port
-				sprintf((char*)txbuf, "Returned: %.3f \r\n", freq );
-				HAL_UART_Transmit(&huart2, txbuf, strlen((char*)txbuf), HAL_MAX_DELAY);
-				__HAL_TIM_SET_COUNTER(htim, 0);
-				//calculation of the new Tref and the assignment of that value to the new PWM value
-				Tref = PWMRANGE*(1-(freq_normal - freq)/(freq_normal - freq_min)) + (100 - PWMRANGE);
-				TIM4->CCR1 = Tref;
-			}
-			else{
-				//HAL_GPIO_TogglePin(GPIOA,GPIO_PIN_10);
-				falseerrors++;
-				sprintf((char*)txbuf, "Returned: %f\r\n", difference);
-				HAL_UART_Transmit(&huart2, txbuf, strlen((char*)txbuf), HAL_MAX_DELAY);
-			}
-		}
-
-	}
-	else{
-		HAL_UART_Transmit(&huart2, buff_msg, sizeof(buff_msg),100);
-	}
+//Required for the timer used for the CAN
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
+    if (htim == canopenNodeSTM32->timerHandle) {
+        canopen_app_interrupt();
+    }
 }
 
+/*CANopen function definitions -----------------------------------------------*/
+CO_SDO_abortCode_t read_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
+                            uint16_t index, uint8_t subIndex,
+                            uint8_t *buf, size_t bufSize, size_t *readSize)
+{
+    CO_SDO_return_t SDO_ret;
 
-/* USER CODE END 0 */
+    // setup client (this can be skipped, if remote device don't change)
+    SDO_ret = CO_SDOclient_setup(SDO_C,
+                                 CO_CAN_ID_SDO_CLI + nodeId,
+                                 CO_CAN_ID_SDO_SRV + nodeId,
+                                 nodeId);
+    if (SDO_ret != CO_SDO_RT_ok_communicationEnd) {
+        return CO_SDO_AB_GENERAL;
+    }
 
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
+    // initiate upload
+    SDO_ret = CO_SDOclientUploadInitiate(SDO_C, index, subIndex, 1000, false);
+    if (SDO_ret != CO_SDO_RT_ok_communicationEnd) {
+        return CO_SDO_AB_GENERAL;
+    }
+
+    // upload data
+    do {
+        uint32_t timeDifference_us = 10000;
+        CO_SDO_abortCode_t abortCode = CO_SDO_AB_NONE;
+
+        SDO_ret = CO_SDOclientUpload(SDO_C,
+                                     timeDifference_us,
+                                     false,
+                                     &abortCode,
+                                     NULL, NULL, NULL);
+        if (SDO_ret < 0) {
+            return abortCode;
+        }
+
+        HAL_Delay(1);
+    } while(SDO_ret > 0);
+
+    // copy data to the user buffer (for long data function must be called
+    // several times inside the loop)
+    *readSize = CO_SDOclientUploadBufRead(SDO_C, buf, bufSize);
+
+    return CO_SDO_AB_NONE;
+}
+
+CO_SDO_abortCode_t write_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
+                             uint16_t index, uint8_t subIndex,
+                             uint8_t *data, size_t dataSize)
+{
+    CO_SDO_return_t SDO_ret;
+    bool_t bufferPartial = false;
+
+    // setup client (this can be skipped, if remote device is the same)
+    SDO_ret = CO_SDOclient_setup(SDO_C,
+                                 CO_CAN_ID_SDO_CLI + nodeId,
+                                 CO_CAN_ID_SDO_SRV + nodeId,
+                                 nodeId);
+    if (SDO_ret != CO_SDO_RT_ok_communicationEnd) {
+        return -1;
+    }
+
+    // initiate download
+    SDO_ret = CO_SDOclientDownloadInitiate(SDO_C, index, subIndex,
+                                           dataSize, 1000, false);
+    if (SDO_ret != CO_SDO_RT_ok_communicationEnd) {
+        return -1;
+    }
+
+    // fill data
+    size_t nWritten = CO_SDOclientDownloadBufWrite(SDO_C, data, dataSize);
+    if (nWritten < dataSize) {
+        bufferPartial = true;
+        // If SDO Fifo buffer is too small, data can be refilled in the loop.
+    }
+
+    //download data
+    do {
+        uint32_t timeDifference_us = 10000;
+        CO_SDO_abortCode_t abortCode = CO_SDO_AB_NONE;
+
+        SDO_ret = CO_SDOclientDownload(SDO_C,
+                                       timeDifference_us,
+                                       false,
+                                       bufferPartial,
+                                       &abortCode,
+                                       NULL, NULL);
+        if (SDO_ret < 0) {
+            return abortCode;
+        }
+
+        HAL_Delay(1);
+    } while(SDO_ret > 0);
+
+    return CO_SDO_AB_NONE;
+}
+/*End of CANopen function definition -----------------------------------------*/
+
+/*Start of main --------------------------------------------------------------*/
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  //MCU Configuration
   HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
   SystemClock_Config();
 
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
+  //Generated by MX
   MX_GPIO_Init();
   MX_USART2_UART_Init();
-  MX_TIM3_Init();
-  MX_TIM4_Init();
-  MX_TIM10_Init();
-  /* USER CODE BEGIN 2 */
-  //HAL_TIM_Base_Start_IT(&htim10);
-  HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_1);
-  TIM4->CCR1 = 90;
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9,GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8,GPIO_PIN_RESET);
-  /* USER CODE END 2 */
+  MX_CAN1_Init();
+  MX_TIM14_Init();
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+  //Code required for CANopen setup
+  CANopenNodeSTM32 canopenNodeSTM32;
+  canopenNodeSTM32.CANHandle = &hcan1;				//CAN module used in the MCU
+  canopenNodeSTM32.HWInitFunction = MX_CAN1_Init;
+  canopenNodeSTM32.timerHandle = &htim14;			//TIM14 selected as the interrupt timer
+  canopenNodeSTM32.desiredNodeID = 32;				//The node address of the micro-controller
+  canopenNodeSTM32.baudrate = 125;					//Desired baud rate for transmission
+  canopen_app_init(&canopenNodeSTM32);
+
+  //Declaration of local variables
+  uint32_t amount_Read = 0;
+
+  /*Infinite loop --------------------------------------------------------------------------------------*/
   while (1)
   {
-    /* USER CODE END WHILE */
+	  //Read the variable 04.09 and write it to data_Rx
+	  read_SDO(canopenNodeSTM32.canOpenStack->SDOclient, 0x01, 0x2004, 0x09, &data_Rx, 4, &amount_Read);
 
-    /* USER CODE BEGIN 3 */
+	  //If data_Rx < 100, set the variable 04.08 to 50%
+	  if (data_Rx < 100){
+		  data_Tx = 5000;
+		  write_SDO(canopenNodeSTM32.canOpenStack->SDOclient, 0x01, 0x2004, 0x08, &data_Tx, 4);
+	  }
+
+	  //If data_Rx > 100, set the variable 04.08 to 100%
+	  if (data_Rx > 100){
+		  data_Tx = 10000;
+		  write_SDO(canopenNodeSTM32.canOpenStack->SDOclient, 0x01, 0x2004, 0x08, &data_Tx, 4);
+	  }
+
+	  //If data_Rx = 100, stop sending variable to the variable 04.08
+	  if (data_Rx == 100){
+		  data_Tx = 2500;
+	  }
+
+	  //Required at the end of every exchange
+	  canopen_app_process();
   }
-  /* USER CODE END 3 */
 }
+/*End of main -----------------------------------------------------------------------------------*/
+/*END OF USER CODE*/
 
+/*Function definitions --------------------------------------------------------------------------*/
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -249,130 +247,70 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief TIM3 Initialization Function
+  * @brief CAN1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM3_Init(void)
+static void MX_CAN1_Init(void)
 {
 
-  /* USER CODE BEGIN TIM3_Init 0 */
+  /* USER CODE BEGIN CAN1_Init 0 */
 
-  /* USER CODE END TIM3_Init 0 */
+  /* USER CODE END CAN1_Init 0 */
 
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_IC_InitTypeDef sConfigIC = {0};
+  /* USER CODE BEGIN CAN1_Init 1 */
 
-  /* USER CODE BEGIN TIM3_Init 1 */
-
-  /* USER CODE END TIM3_Init 1 */
-  htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 84-1;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 65535;
-  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_IC_Init(&htim3) != HAL_OK)
+  /* USER CODE END CAN1_Init 1 */
+  hcan1.Instance = CAN1;
+  hcan1.Init.Prescaler = 21;
+  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_13TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;
+  hcan1.Init.TimeTriggeredMode = DISABLE;
+  hcan1.Init.AutoBusOff = DISABLE;
+  hcan1.Init.AutoWakeUp = DISABLE;
+  hcan1.Init.AutoRetransmission = ENABLE;
+  hcan1.Init.ReceiveFifoLocked = DISABLE;
+  hcan1.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan1) != HAL_OK)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim3, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM3_Init 2 */
+  /* USER CODE BEGIN CAN1_Init 2 */
 
-  /* USER CODE END TIM3_Init 2 */
+  /* USER CODE END CAN1_Init 2 */
 
 }
 
 /**
-  * @brief TIM4 Initialization Function
+  * @brief TIM14 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM4_Init(void)
+static void MX_TIM14_Init(void)
 {
 
-  /* USER CODE BEGIN TIM4_Init 0 */
+  /* USER CODE BEGIN TIM14_Init 0 */
 
-  /* USER CODE END TIM4_Init 0 */
+  /* USER CODE END TIM14_Init 0 */
 
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
+  /* USER CODE BEGIN TIM14_Init 1 */
 
-  /* USER CODE BEGIN TIM4_Init 1 */
-
-  /* USER CODE END TIM4_Init 1 */
-  htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 0;
-  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 65535;
-  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
+  /* USER CODE END TIM14_Init 1 */
+  htim14.Instance = TIM14;
+  htim14.Init.Prescaler = 84;
+  htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim14.Init.Period = 1000;
+  htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM4_Init 2 */
+  /* USER CODE BEGIN TIM14_Init 2 */
 
-  /* USER CODE END TIM4_Init 2 */
-  HAL_TIM_MspPostInit(&htim4);
-
-}
-
-/**
-  * @brief TIM10 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM10_Init(void)
-{
-
-  /* USER CODE BEGIN TIM10_Init 0 */
-
-  /* USER CODE END TIM10_Init 0 */
-
-  /* USER CODE BEGIN TIM10_Init 1 */
-
-  /* USER CODE END TIM10_Init 1 */
-  htim10.Instance = TIM10;
-  htim10.Init.Prescaler = 0;
-  htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim10.Init.Period = 65535;
-  htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim10.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim10) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM10_Init 2 */
-
-  /* USER CODE END TIM10_Init 2 */
+  /* USER CODE END TIM14_Init 2 */
 
 }
 
@@ -427,7 +365,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_8|GPIO_PIN_9, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -435,24 +373,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD2_Pin PA8 PA9 */
-  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_8|GPIO_PIN_9;
+  /*Configure GPIO pin : LD2_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void Tref_calc(){
 
-	Tref = PWMRANGE*(1 - (freq_normal - freq)/(freq_normal - freq_min)) + (100 - PWMRANGE);
-	TIM4->CCR1 = Tref;
-
-}
 /* USER CODE END 4 */
 
 /**
