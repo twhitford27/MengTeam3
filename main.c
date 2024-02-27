@@ -37,14 +37,6 @@ static void MX_USART2_UART_Init(void);		//Generated from MX
 static void MX_CAN1_Init(void);				//Generated from MX
 static void MX_TIM14_Init(void);			//Generated from MX
 
-/* Private user code ---------------------------------------------------------*/
-//Required for the timer used for the CAN
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
-    if (htim == canopenNodeSTM32->timerHandle) {
-        canopen_app_interrupt();
-    }
-}
-
 /*CANopen function definitions -----------------------------------------------*/
 CO_SDO_abortCode_t read_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
                             uint16_t index, uint8_t subIndex,
@@ -186,10 +178,7 @@ int main(void)
 		  write_SDO(canopenNodeSTM32.canOpenStack->SDOclient, 0x01, 0x2004, 0x08, &data_Tx, 4);
 	  }
 
-	  //If data_Rx = 100, stop sending variable to the variable 04.08
-	  if (data_Rx == 100){
-		  data_Tx = 2500;
-	  }
+	  //Else if data_Rx = 100, stop sending variable to the variable 04.08
 
 	  //Required at the end of every exchange
 	  canopen_app_process();
