@@ -1,9 +1,6 @@
-# MengTeam3
-Team3
-If you want to commit contact, thomas whitford at twhitford2224@gmail.com
+**READ ME**
 
+1. Download the folders "CANopenNode_STM32" and "CANopenNode" from the following repository:
+https://github.com/CANopenNode/CanOpenSTM32?tab=readme-ov-file
 
-
-This is for acadmeic purposes for the University of Manchester,
-
-This repository is still in use as of 12/02/2024
+2. Move these files into the same project directory as your STM32 project.
